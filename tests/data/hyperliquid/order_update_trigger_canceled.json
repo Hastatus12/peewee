@@ -1,0 +1,1 @@
+{"channel":"orderUpdates","data":[{"order":{"coin":"BTC","side":"B","limitPx":"73720.0","sz":"0.00017","oid":613131109894,"timestamp":1795346535435,"origSz":"0.00017","cloid":"0x0000000000000000000001a202fdfe22"},"status":"canceled","statusTimestamp":1795346540500}]}

@@ -1,0 +1,1 @@
+{"reqId":"1-1","retCode":110007,"retMsg":"ab not enough for new order","op":"order.create","data":{},"retExtInfo":{},"header":{"X-Bapi-Limit":"10","X-Bapi-Limit-Status":"9","X-Bapi-Limit-Reset-Timestamp":"1794172926739","Traceid":"7a3ffefa2189d05c30a9f0e2ed8183f3","Timenow":"1794172926741"},"connId":"dbc2i0v1s27msjj15phg-3fdvt"}

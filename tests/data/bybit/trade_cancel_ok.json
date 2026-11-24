@@ -1,0 +1,1 @@
+{"reqId":"1-2","retCode":0,"retMsg":"OK","op":"order.cancel","data":{"orderId":"4ca1b1d4-9e11-4a9b-9102-1eab156add53","orderLinkId":"1"},"retExtInfo":{},"header":{"X-Bapi-Limit-Status":"9","X-Bapi-Limit-Reset-Timestamp":"1794173411493","Traceid":"1624ab90f301cedc648c9bd3befb4a0e","Timenow":"1794173411494","X-Bapi-Limit":"10"},"connId":"dbc2g45hih5m0e2cb1qg-3fiq4"}
