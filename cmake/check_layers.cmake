@@ -17,7 +17,8 @@ set(PEEWEE_LAYER_RULES
     "algo:core book venue oms algo"
     "engine:core book venue oms algo engine"
     "venues:core book venue venues transport"
-    "transport:core transport")
+    "transport:core transport"
+    "client:core book venue oms algo engine venues client")
 
 set(violations "")
 

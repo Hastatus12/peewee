@@ -96,6 +96,8 @@ void ChaseOrder::on_order(const Order& order, const OrderEvent& event) {
         },
         [&](const Fill& f) {
             filled_ += f.qty;
+            fill_value_ += f.px.ticks * f.qty.lots;
+            fill_lots_ += f.qty.lots;
             if (remaining().lots <= 0)
                 finish(Result::Filled);
         },

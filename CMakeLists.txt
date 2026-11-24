@@ -87,9 +87,15 @@ if(PEEWEE_WITH_NETWORK)
     target_compile_definitions(peewee_core INTERFACE PEEWEE_WITH_NETWORK=1)
 endif()
 
+# Simple interface on top of everything: Exchange, OrderHandle.
+find_package(Threads REQUIRED)
+add_library(peewee_client src/client/exchange.cpp)
+target_link_libraries(peewee_client PUBLIC peewee_engine peewee_sim peewee_bybit peewee_hyperliquid
+                                     PRIVATE Threads::Threads)
+
 # Combined target for library consumers
 add_library(peewee INTERFACE)
-target_link_libraries(peewee INTERFACE peewee_engine peewee_sim peewee_bybit peewee_hyperliquid)
+target_link_libraries(peewee INTERFACE peewee_client peewee_engine peewee_sim peewee_bybit peewee_hyperliquid)
 add_library(peewee::peewee ALIAS peewee)
 
 if(PEEWEE_BUILD_TESTS)

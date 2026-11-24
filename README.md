@@ -58,7 +58,43 @@ cmake --build build
 cd build && ctest
 ```
 
-## Example: a chase order on Hyperliquid
+## Quick start
+
+```cpp
+#include <cstdio>
+
+#include "peewee/client/exchange.hpp"
+
+using namespace peewee;
+
+int main() {
+    // Keys from HL_ACCOUNT (main account) and HL_API_KEY (API wallet key).
+    auto hl = Exchange::hyperliquid({"ETH", "BTC"});
+
+    // Follow the best bid, paying at most 0.5% above the ask seen at start.
+    auto order = hl.chase("ETH", Side::Buy, 0.01, {.max_move_pct = 0.5});
+    order.wait();
+    std::printf("%s: %g ETH at %g\n", order.state_text(), order.filled(), order.avg_price());
+
+    // Other kinds of order. Each call returns at once; wait(), cancel(),
+    // filled() and state() can be used from any thread.
+    auto close = hl.market("ETH", Side::Sell, 0.01, {.max_move_pct = 0.3, .reduce_only = true});
+    auto resting = hl.limit("BTC", Side::Buy, 0.0002, 55000.0, {.tif = Tif::PostOnly});
+    close.wait();
+    resting.cancel();
+}
+```
+
+`Exchange::bybit({"BTCPERP"})` works the same way, with `BYBIT_API_KEY` and
+`BYBIT_API_SECRET`. The exchange's tick and lot sizes are fetched when the
+`Exchange` is created, so prices and quantities are plain numbers. The engine
+runs on a background thread owned by the `Exchange`; destroying it cancels
+the orders still working.
+
+The rest of this page is about the lower level, for writing your own
+algorithms.
+
+## Example: a chase order on Hyperliquid, lower level
 
 ```cpp
 #include <chrono>
@@ -189,6 +225,7 @@ address.
 ## Layout
 
 ```text
+include/peewee/client   Exchange and OrderHandle: the simple interface
 include/peewee/core     prices, quantities, order types, commands, events, clock
 include/peewee/oms      order state and the order manager
 include/peewee/algo     algorithm base class and ChaseOrder
@@ -202,7 +239,7 @@ examples                the command-line tools above
 ```
 
 Modules depend on each other in one direction only
-(`engine -> algo -> book, oms -> core`; `venues -> core, transport`). A build
+(`client -> engine -> algo -> book, oms -> core`; `venues -> core, transport`). A build
 step (`cmake/check_layers.cmake`) fails the build if a file includes a module
 it should not.
 

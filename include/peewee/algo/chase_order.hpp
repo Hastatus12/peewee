@@ -98,6 +98,10 @@ public:
     Qty remaining() const { return p_.qty - filled_; }
     // The limit in use (computed from max_move_pct if it was not given).
     Price limit() const { return p_.limit; }
+    // Average price of the fills received, in ticks (0 if none yet).
+    double average_fill_ticks() const {
+        return fill_lots_ > 0 ? static_cast<double>(fill_value_) / static_cast<double>(fill_lots_) : 0.0;
+    }
     int reprice_count() const { return reprices_; }
 
 private:
@@ -119,6 +123,8 @@ private:
     ClientOrderId cid_ = kNoOrder;  // Currently managed order.
     Price px_;                      // Exchange-confirmed price.
     Qty filled_;                    // Quantity filled so far.
+    int64_t fill_value_ = 0;        // Sum of price (ticks) x qty (lots) of the fills received.
+    int64_t fill_lots_ = 0;         // Lots of the fills received.
     int reprices_ = 0;              // Amendments sent.
     Timestamp started_at_{};
     Timestamp last_request_at_{};
