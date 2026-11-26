@@ -82,6 +82,9 @@ public:
     static Exchange hyperliquid(const std::vector<std::string>& coins, bool testnet = false);
     // Keys from BYBIT_API_KEY and BYBIT_API_SECRET. Linear contracts.
     static Exchange bybit(const std::vector<std::string>& symbols, bool testnet = false);
+    // Keys from LIGHTER_ACCOUNT_INDEX, LIGHTER_API_KEY_INDEX and LIGHTER_API_KEY
+    // (the API key's private key). Perpetuals: "BTC", "ETH", ...
+    static Exchange lighter(const std::vector<std::string>& symbols, bool testnet = false);
 
     // Advanced: an engine already set up (venue added, instruments added,
     // connected). The Exchange takes it over and runs it.

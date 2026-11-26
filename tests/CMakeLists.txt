@@ -18,3 +18,9 @@ target_include_directories(test_hl_codec PRIVATE ${CMAKE_SOURCE_DIR}/src/venues/
 peewee_test(test_hl_signer)
 target_include_directories(test_hl_signer PRIVATE ${CMAKE_SOURCE_DIR}/src/venues/hyperliquid)
 target_compile_definitions(test_hl_codec PRIVATE PEEWEE_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
+
+peewee_test(test_lighter_codec)
+target_include_directories(test_lighter_codec PRIVATE ${CMAKE_SOURCE_DIR}/src/venues/lighter)
+target_compile_definitions(test_lighter_codec PRIVATE PEEWEE_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
+peewee_test(test_lighter_signer)
+target_include_directories(test_lighter_signer PRIVATE ${CMAKE_SOURCE_DIR}/src/venues/lighter)

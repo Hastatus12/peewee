@@ -5,23 +5,25 @@ trading algorithms one interface for market data and order entry, and handles
 the exchange-specific parts: signing, wire formats, acknowledgements, fills,
 reconnects.
 
-Supported venues: Bybit (v5, linear perpetuals) and Hyperliquid (perpetuals),
-plus a simulated venue for tests. Both real venues have been used with real
-orders, in small size.
+Supported venues: Bybit (v5, linear perpetuals), Hyperliquid (perpetuals) and
+Lighter (perpetuals), plus a simulated venue for tests. Bybit and Hyperliquid
+have been used with real orders, in small size. Lighter's market data has been
+run live; its signing is checked against Lighter's own Go code, but it has not
+placed a real order yet (see Limitations).
 
 ## What it does
 
 Order types:
 
-| Type | Bybit | Hyperliquid |
-|---|---|---|
-| Limit: GTC, IOC, post-only | yes | yes |
-| Limit: FOK | yes | no (rejected before sending) |
-| Market, with a worst price | yes (sent as limit IOC) | yes (limit IOC, as the exchange does itself) |
-| Stop market / stop limit | yes | yes |
-| Take-profit market / limit | yes | yes |
-| Reduce-only | yes | yes |
-| Amend price and quantity | yes | yes (modify) |
+| Type | Bybit | Hyperliquid | Lighter |
+|---|---|---|---|
+| Limit: GTC, IOC, post-only | yes | yes | yes (GTC sent as good-till-time, 28 days) |
+| Limit: FOK | yes | no (rejected before sending) | no (rejected before sending) |
+| Market, with a worst price | yes (sent as limit IOC) | yes (limit IOC, as the exchange does itself) | yes |
+| Stop market / stop limit | yes | yes | yes |
+| Take-profit market / limit | yes | yes | yes |
+| Reduce-only | yes | yes | yes |
+| Amend price and quantity | yes | yes (modify) | yes (modify) |
 
 Every market-type order carries a worst acceptable price, so an empty book
 cannot fill it at an absurd level. One exception: once triggered, a
@@ -35,7 +37,7 @@ Around the order types:
   to requests, drops duplicate fills, and asks the exchange for the order
   state when an answer does not arrive in time.
 - Connections are monitored with pings; a dead one is noticed within 15 s
-  (Hyperliquid) or 25 s (Bybit), reconnected with backoff, and open orders are
+  (Hyperliquid) or 25 s (Bybit, Lighter), reconnected with backoff, and open orders are
   re-queried afterwards.
 - Algorithms only react to events (book, order, timer, venue status) and never
   do I/O, so the same code runs against a real exchange or the simulator.
@@ -86,7 +88,9 @@ int main() {
 ```
 
 `Exchange::bybit({"BTCPERP"})` works the same way, with `BYBIT_API_KEY` and
-`BYBIT_API_SECRET`. The exchange's tick and lot sizes are fetched when the
+`BYBIT_API_SECRET`, and `Exchange::lighter({"BTC", "ETH"})` with
+`LIGHTER_ACCOUNT_INDEX`, `LIGHTER_API_KEY_INDEX` and `LIGHTER_API_KEY` (the API
+key's private key, as Lighter's SDKs print it). The exchange's tick and lot sizes are fetched when the
 `Exchange` is created, so prices and quantities are plain numbers. The engine
 runs on a background thread owned by the `Exchange`; destroying it cancels
 the orders still working.
@@ -139,7 +143,9 @@ int main() {
 ```
 
 `connect()` checks with Hyperliquid that the key belongs to an API wallet of
-`account_address` and refuses to start otherwise. Keys are only ever read from
+`account_address` and refuses to start otherwise. `LighterVenue::connect()`
+does the same: the public key of `api_private_key` must be the one Lighter has
+registered at (`account_index`, `api_key_index`). Keys are only ever read from
 the environment; nothing is written to disk.
 
 ## Example: your own algorithm, on the simulator
@@ -207,18 +213,20 @@ the tests.
 Built in `build/` together with the library:
 
 ```text
-chase_live <bybit|hl> <test|main> SYMBOL buy|sell QTY [LIMIT] [options]
+chase_live <bybit|hl|lighter> <test|main> SYMBOL buy|sell QTY [LIMIT] [options]
     --max-move P%      without LIMIT: limit = best ask + P% (buy) / best bid - P% (sell)
     --reprice-ms N     minimum time between amends
     --offset N         ticks in front of the best price
     --max-reprices N   amends allowed in total
     --max-seconds N    cancel and stop after N seconds
-hl_book, bybit_book    print the top of the book (no keys needed)
+hl_book, bybit_book,   print the top of the book (no keys needed)
+lighter_book
 chase_sim              a chase on the simulator, step by step
 ```
 
-Keys come from the environment: `BYBIT_API_KEY` and `BYBIT_API_SECRET`, or
-`HL_ACCOUNT` and `HL_API_KEY`. `PEEWEE_DEBUG=1` prints every message sent and
+Keys come from the environment: `BYBIT_API_KEY` and `BYBIT_API_SECRET`,
+`HL_ACCOUNT` and `HL_API_KEY`, or `LIGHTER_ACCOUNT_INDEX`, `LIGHTER_API_KEY_INDEX`
+and `LIGHTER_API_KEY`. `PEEWEE_DEBUG=1` prints every message sent and
 received (except order book updates). Those logs contain your account
 address.
 
@@ -230,7 +238,7 @@ include/peewee/core     prices, quantities, order types, commands, events, clock
 include/peewee/oms      order state and the order manager
 include/peewee/algo     algorithm base class and ChaseOrder
 include/peewee/engine   event loop connecting venues, OMS and algorithms
-include/peewee/venues   Bybit, Hyperliquid and simulator adapters
+include/peewee/venues   Bybit, Hyperliquid, Lighter and simulator adapters
 src/venues/*/           *_codec.cpp: pure translation, tested on real messages
                         *_venue.cpp: connections and threads
 src/transport           WebSocket and HTTPS clients (Boost.Beast)
@@ -248,12 +256,25 @@ it should not.
 - No positions or balances yet: the library tracks orders, not what they add
   up to.
 - One instrument per algorithm.
-- Order rate limits are not enforced for Hyperliquid (they depend on the
-  account's traded volume).
+- Order rate limits are not enforced for Hyperliquid and Lighter (they depend
+  on the account's volume or tier).
 - Bybit has been tested with linear contracts only.
 - Hyperliquid prices are limited to 5 significant digits. The tick used for an
   instrument is computed from its price at startup, and is only valid while the
   price stays in the same power of ten.
+- Lighter: order entry has not been run against the real exchange yet. Its
+  transactions are signed with Lighter's own scheme (Poseidon2 hashes,
+  Schnorr signatures on the ECgFp5 curve), written in C++ and checked byte for
+  byte against Lighter's Go SDK (`tests/test_lighter_signer.cpp`), but the
+  answer to an accepted order and the private order and trade messages are
+  built from Lighter's documentation, not recorded. Run
+  `examples/lighter_order_test` on testnet before trading, and save its
+  messages in `tests/data/lighter/`. Also unchecked live: which side of the
+  price a Lighter stop or take-profit triggers on, and whether a modify's size
+  is the new total (assumed, as in the library).
+- Lighter nonces are counted locally from the API key's next nonce. A refused
+  transaction does not use its nonce, so the ones sent right after it are
+  refused too; the venue then reads the nonce again from Lighter.
 - Not supported: TWAP, trailing stops, and take-profit / stop-loss attached
   to an entry order.
 
@@ -265,5 +286,8 @@ It comes with no warranty: you are responsible for every order it sends.
 ## License
 
 MIT, see `LICENSE`. The ECDSA signing code is adapted from
-[hyperliquid-cpp](https://github.com/charlitocrc/hyperliquid-cpp), see
-`THIRD_PARTY_NOTICES.md`.
+[hyperliquid-cpp](https://github.com/charlitocrc/hyperliquid-cpp), and the
+Lighter signing code is ported from
+[lighter-go](https://github.com/elliottech/lighter-go) and
+[poseidon_crypto](https://github.com/elliottech/poseidon_crypto) (Apache 2.0);
+see `THIRD_PARTY_NOTICES.md`.
