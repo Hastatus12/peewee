@@ -55,6 +55,11 @@ public:
                                      double lot_size, double min_qty, int price_sig_figs = 0);
 
     const Instrument* find_instrument(std::string_view venue_name, std::string_view symbol) const;
+    const std::deque<Instrument>& instruments() const { return instruments_; }
+
+    // Keep the instrument's book up to date even without an algorithm on it
+    // (e.g. to show prices). Engine thread. Does nothing if already followed.
+    void watch_book(const Instrument& inst);
 
     // Create and start an algorithm. A's constructor receives (AlgoContext, args...).
     // Automatically subscribe to the instrument's order book.

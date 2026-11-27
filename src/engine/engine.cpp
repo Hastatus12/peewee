@@ -108,6 +108,12 @@ AlgoContext Engine::make_context(IVenue& venue, const Instrument& inst) {
     return AlgoContext{oms_, venue, *clock_, inst, books_.at(inst.id)};
 }
 
+void Engine::watch_book(const Instrument& inst) {
+    if (book_subscribed_.at(inst.id)) return;
+    book_subscribed_[inst.id] = true;
+    venues_.at(inst.venue)->venue->subscribe_book(inst.id, kDefaultBookDepth);
+}
+
 void Engine::register_algo(std::unique_ptr<Algo> a, IVenue& venue, const Instrument& inst) {
     const auto id = static_cast<AlgoId>(algos_.size());
     a->id_ = id;
@@ -119,7 +125,13 @@ void Engine::register_algo(std::unique_ptr<Algo> a, IVenue& venue, const Instrum
         venue.subscribe_book(inst.id, kDefaultBookDepth);
     }
 
-    algos_.back().algo->on_start();
+    Algo& algo = *algos_.back().algo;
+    algo.on_start();
+    // The book may already be followed (another algorithm, watch_book): give
+    // it now, instead of waiting for its next change, which on a quiet book
+    // may take a while.
+    const OrderBook& book = books_.at(inst.id);
+    if (book.valid() && !algo.done()) algo.on_book(book);
 }
 
 void Engine::connect_all() {

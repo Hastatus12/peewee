@@ -8,6 +8,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <thread>
+#include <unordered_map>
 #include <variant>
 
 #include "peewee/algo/chase_order.hpp"
@@ -217,6 +218,25 @@ struct Exchange::Impl {
     bool closing = false;
     std::chrono::steady_clock::time_point close_deadline;
 
+    // Best bid / ask per symbol: written by the engine thread, read by any.
+    mutable std::mutex quotes_m;
+    std::unordered_map<std::string, Exchange::Quote> quotes;
+
+    // Engine thread: copy the top of every valid book.
+    void update_quotes() {
+        std::lock_guard lock(quotes_m);
+        for (const Instrument& inst : engine->instruments()) {
+            const OrderBook& book = engine->book(inst.id);
+            const auto bid = book.best_bid();
+            const auto ask = book.best_ask();
+            if (book.valid() && bid && ask) {
+                quotes[inst.symbol] = Exchange::Quote{inst.to_double(*bid), inst.to_double(*ask)};
+            } else {
+                quotes.erase(inst.symbol);
+            }
+        }
+    }
+
     void post(std::function<void()> fn) {
         std::lock_guard lock(m);
         commands.push_back(std::move(fn));
@@ -246,6 +266,7 @@ struct Exchange::Impl {
             for (auto& fn : todo) fn();
 
             const size_t events = engine->poll();
+            if (events > 0) update_quotes();
 
             for (auto& t : active) t.update();
             active.erase(std::remove_if(active.begin(), active.end(),
@@ -318,6 +339,10 @@ void OrderHandle::cancel() {
 Exchange::Exchange(std::unique_ptr<Engine> engine, IVenue& venue) : impl_(std::make_shared<Impl>()) {
     impl_->engine = std::move(engine);
     impl_->venue = &venue;
+    // Follow every book from the start, so quote() works before any order.
+    impl_->post([impl = impl_.get()] {
+        for (const Instrument& inst : impl->engine->instruments()) impl->engine->watch_book(inst);
+    });
     impl_->thread = std::thread([impl = impl_.get()] { impl->loop(); });
 }
 
@@ -500,6 +525,13 @@ OrderHandle Exchange::market(std::string_view symbol, Side side, double qty, Mar
 
 void Exchange::cancel_all() {
     impl_->post([impl = impl_.get()] { impl->stop_all(); });
+}
+
+std::optional<Exchange::Quote> Exchange::quote(std::string_view symbol) const {
+    std::lock_guard lock(impl_->quotes_m);
+    const auto it = impl_->quotes.find(std::string(symbol));
+    if (it == impl_->quotes.end()) return std::nullopt;
+    return it->second;
 }
 
 void Exchange::post(std::function<void(Engine&)> fn) {

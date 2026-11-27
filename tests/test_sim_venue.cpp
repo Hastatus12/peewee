@@ -42,6 +42,17 @@ public:
 
 }  // namespace
 
+TEST(second_algo_gets_the_book_at_once) {
+    // The book is already followed (first algorithm) and does not change:
+    // the second algorithm must still see it right away.
+    SimHarness h;
+    h.engine.start_algo<ProbeAlgo>(h.sim, h.btc);
+    h.pump();
+    auto& second = h.engine.start_algo<ProbeAlgo>(h.sim, h.btc);
+    CHECK_EQ(second.books, 1);
+    CHECK_EQ(*second.last_bid, h.px(100.0));
+}
+
 TEST(book_is_delivered_after_subscribe) {
     SimHarness h;
     auto& a = h.engine.start_algo<ProbeAlgo>(h.sim, h.btc);

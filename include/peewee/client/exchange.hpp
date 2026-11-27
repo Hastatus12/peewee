@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -119,6 +120,14 @@ public:
     OrderHandle market(std::string_view symbol, Side side, double qty, MarketOptions opt = {});
 
     void cancel_all();
+
+    // Best bid and ask of a symbol given at creation. nullopt until its book
+    // has arrived (a second or so after creation), or for an unknown symbol.
+    struct Quote {
+        double bid = 0.0;
+        double ask = 0.0;
+    };
+    std::optional<Quote> quote(std::string_view symbol) const;
 
     // Advanced: run `fn` on the engine thread (e.g. to drive a simulator).
     void post(std::function<void(Engine&)> fn);

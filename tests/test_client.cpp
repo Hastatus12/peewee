@@ -50,6 +50,13 @@ TEST(market_order_worst_price_follows_the_current_ask) {
     t.on_engine([](SimVenue& sim, const Instrument& i) {
         sim.set_book(i.id, {{i.price(100.0), i.qty(1)}}, {{i.price(105.0), i.qty(1)}});
     });
+    // Wait until the library sees the new book: an order sent before would
+    // use the old ask (100.5 + 0.1%) and be canceled unfilled, correctly.
+    for (int i = 0; i < 200; ++i) {
+        const auto q = t.ex->quote("BTC");
+        if (q && q->ask > 104.0) break;
+        std::this_thread::sleep_for(5ms);
+    }
     auto order = t.ex->market("BTC", Side::Buy, 0.01, {.max_move_pct = 0.1});
     // Worst price 105.0 + 0.1% = 105.1: fills at 105.0.
     CHECK(order.wait_for(2s));
@@ -132,6 +139,19 @@ TEST(chase_reports_its_current_price) {
     CHECK(std::abs(order.order_price() - 100.2) < 1e-9);  // Followed the bid.
     order.cancel();
     CHECK(order.wait_for(2s));
+}
+
+TEST(quote_shows_the_top_of_the_book_without_any_order) {
+    SimExchange t;
+    std::optional<Exchange::Quote> q;
+    for (int i = 0; i < 100 && !q; ++i) {
+        q = t.ex->quote("BTC");
+        if (!q) std::this_thread::sleep_for(10ms);
+    }
+    CHECK(q.has_value());
+    CHECK(std::abs(q->bid - 100.0) < 1e-9);
+    CHECK(std::abs(q->ask - 100.5) < 1e-9);
+    CHECK(!t.ex->quote("ETH").has_value());
 }
 
 TEST(unknown_symbol_and_tiny_quantity_throw) {
