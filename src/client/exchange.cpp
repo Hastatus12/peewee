@@ -28,8 +28,10 @@ struct OrderHandle::Shared {
     State state = State::Working;
     double filled = 0.0;
     double avg_price = 0.0;
+    double order_price = 0.0;
     std::string error;
     std::weak_ptr<Exchange::Impl> exchange;  // For cancel().
+    std::function<void(const OrderHandle&)> on_update;
 };
 
 OrderHandle::State OrderHandle::state() const {
@@ -58,6 +60,16 @@ double OrderHandle::filled() const {
 double OrderHandle::avg_price() const {
     std::lock_guard lock(s_->m);
     return s_->avg_price;
+}
+
+double OrderHandle::order_price() const {
+    std::lock_guard lock(s_->m);
+    return s_->order_price;
+}
+
+void OrderHandle::on_update(std::function<void(const OrderHandle&)> fn) {
+    std::lock_guard lock(s_->m);
+    s_->on_update = std::move(fn);
 }
 
 std::string OrderHandle::error() const {
@@ -140,6 +152,7 @@ public:
 
     OrderState final_state() const { return final_; }
     Qty filled() const { return filled_; }
+    Price price() const { return cid_ != kNoOrder && !done_ ? order_.px : Price{}; }  // In the book now.
     double average_fill_ticks() const {
         return fill_lots_ > 0 ? static_cast<double>(fill_value_) / static_cast<double>(fill_lots_) : 0.0;
     }
@@ -262,16 +275,25 @@ struct Exchange::Impl {
 
 // Called on the engine thread after each poll: publish progress, and the
 // final state once the algorithm is done.
-static void publish(OrderHandle::Shared& s, double filled, double avg_price, bool done, OrderHandle::State state,
-                    const std::string& error) {
-    std::lock_guard lock(s.m);
-    s.filled = filled;
-    s.avg_price = avg_price;
-    if (done && s.state == OrderHandle::State::Working) {
-        s.state = state;
-        s.error = error;
-        s.cv.notify_all();
+static void publish(const std::shared_ptr<OrderHandle::Shared>& s, double filled, double avg_price,
+                    double order_price, bool done, OrderHandle::State state, const std::string& error) {
+    std::function<void(const OrderHandle&)> callback;
+    {
+        std::lock_guard lock(s->m);
+        bool changed = s->filled != filled || s->avg_price != avg_price || s->order_price != order_price;
+        s->filled = filled;
+        s->avg_price = avg_price;
+        s->order_price = order_price;
+        if (done && s->state == OrderHandle::State::Working) {
+            s->state = state;
+            s->error = error;
+            s->cv.notify_all();
+            changed = true;
+        }
+        if (changed) callback = s->on_update;
     }
+    // Outside the lock: the callback may read the handle (filled(), ...).
+    if (callback) callback(OrderHandle(s));
 }
 
 void OrderHandle::cancel() {
@@ -319,11 +341,15 @@ Exchange Exchange::hyperliquid(const std::vector<std::string>& coins, bool testn
     const char* key = std::getenv("HL_API_KEY");
     if (!account || !key) throw std::runtime_error("peewee: set HL_ACCOUNT and HL_API_KEY");
 
-    auto engine = std::make_unique<Engine>();
     HyperliquidConfig cfg;
     cfg.account_address = account;
     cfg.api_wallet_key = key;
     cfg.testnet = testnet;
+    return hyperliquid(cfg, coins);
+}
+
+Exchange Exchange::hyperliquid(const HyperliquidConfig& cfg, const std::vector<std::string>& coins) {
+    auto engine = std::make_unique<Engine>();
     auto& venue = engine->add_venue<HyperliquidVenue>(cfg);
     for (const auto& coin : coins) {
         const auto spec = venue.fetch_instrument(coin);
@@ -338,11 +364,15 @@ Exchange Exchange::bybit(const std::vector<std::string>& symbols, bool testnet) 
     const char* secret = std::getenv("BYBIT_API_SECRET");
     if (!key || !secret) throw std::runtime_error("peewee: set BYBIT_API_KEY and BYBIT_API_SECRET");
 
-    auto engine = std::make_unique<Engine>();
     BybitConfig cfg;
     cfg.api_key = key;
     cfg.api_secret = secret;
     cfg.testnet = testnet;
+    return bybit(cfg, symbols);
+}
+
+Exchange Exchange::bybit(const BybitConfig& cfg, const std::vector<std::string>& symbols) {
+    auto engine = std::make_unique<Engine>();
     auto& venue = engine->add_venue<BybitVenue>(cfg);
     for (const auto& symbol : symbols) {
         const auto spec = venue.fetch_instrument(symbol);
@@ -360,12 +390,16 @@ Exchange Exchange::lighter(const std::vector<std::string>& symbols, bool testnet
         throw std::runtime_error("peewee: set LIGHTER_ACCOUNT_INDEX, LIGHTER_API_KEY_INDEX and LIGHTER_API_KEY");
     }
 
-    auto engine = std::make_unique<Engine>();
     LighterConfig cfg;
     cfg.account_index = std::stoll(account);
     cfg.api_key_index = std::stoi(key_index);
     cfg.api_private_key = key;
     cfg.testnet = testnet;
+    return lighter(cfg, symbols);
+}
+
+Exchange Exchange::lighter(const LighterConfig& cfg, const std::vector<std::string>& symbols) {
+    auto engine = std::make_unique<Engine>();
     auto& venue = engine->add_venue<LighterVenue>(cfg);
     for (const auto& symbol : symbols) {
         const auto spec = venue.fetch_instrument(symbol);
@@ -409,8 +443,9 @@ OrderHandle Exchange::chase(std::string_view symbol, Side side, double qty, Chas
     impl_->post([impl = impl_.get(), s = h.s_, inst = &inst, p] {
         auto* chase = &impl->engine->start_algo<ChaseOrder>(*impl->venue, *inst, p);
         impl->track(chase, s, [chase, s, inst] {
-            publish(*s, inst->to_double(chase->filled()), chase->average_fill_ticks() * inst->tick_size,
-                    chase->done(), from_chase(chase->result()), "");
+            publish(s, inst->to_double(chase->filled()), chase->average_fill_ticks() * inst->tick_size,
+                    chase->done() ? 0.0 : inst->to_double(chase->current_price()), chase->done(),
+                    from_chase(chase->result()), "");
         });
     });
     return h;
@@ -434,8 +469,8 @@ OrderHandle Exchange::limit(std::string_view symbol, Side side, double qty, doub
     impl_->post([impl = impl_.get(), s = h.s_, inst = &inst, o] {
         auto* algo = &impl->engine->start_algo<SingleOrder>(*impl->venue, *inst, o, 0.0);
         impl->track(algo, s, [algo, s, inst] {
-            publish(*s, inst->to_double(algo->filled()), algo->average_fill_ticks() * inst->tick_size,
-                    algo->done(), from_order(algo->final_state()), algo->error());
+            publish(s, inst->to_double(algo->filled()), algo->average_fill_ticks() * inst->tick_size,
+                    inst->to_double(algo->price()), algo->done(), from_order(algo->final_state()), algo->error());
         });
     });
     return h;
@@ -456,8 +491,8 @@ OrderHandle Exchange::market(std::string_view symbol, Side side, double qty, Mar
     impl_->post([impl = impl_.get(), s = h.s_, inst = &inst, o, pct = opt.max_move_pct] {
         auto* algo = &impl->engine->start_algo<SingleOrder>(*impl->venue, *inst, o, pct);
         impl->track(algo, s, [algo, s, inst] {
-            publish(*s, inst->to_double(algo->filled()), algo->average_fill_ticks() * inst->tick_size,
-                    algo->done(), from_order(algo->final_state()), algo->error());
+            publish(s, inst->to_double(algo->filled()), algo->average_fill_ticks() * inst->tick_size,
+                    inst->to_double(algo->price()), algo->done(), from_order(algo->final_state()), algo->error());
         });
     });
     return h;

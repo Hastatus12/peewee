@@ -2,6 +2,7 @@
 // Hyperliquid adapter: translates between Hyperliquid and the library.
 
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <thread>
@@ -34,6 +35,13 @@ struct HyperliquidConfig {
     std::string api_wallet_key;
     bool testnet = true;
     std::string vault_address;        // Optional: trade on behalf of a vault.
+    // Dead man's switch, in seconds (0 = off, otherwise at least 10). The
+    // venue keeps asking Hyperliquid to cancel ALL the account's open orders
+    // this long from now, renewing it every third of that time. If the
+    // program dies or loses the network for longer, Hyperliquid cancels the
+    // orders by itself. disconnect() removes it. Note: it also cancels orders
+    // placed by hand on the website, and Hyperliquid allows 10 triggers a day.
+    int dead_man_switch_s = 0;
 };
 
 // Trading rules of one coin, as Hyperliquid's rules give them.
@@ -82,6 +90,14 @@ private:
     void on_close(std::string_view reason);
     void schedule_ping();
     void send_private_subscriptions();
+    // Dead man's switch (HyperliquidConfig::dead_man_switch_s).
+    void renew_dead_man_switch();
+    void schedule_dead_man_switch();
+
+    // Any thread: sign an action and wrap it in a "post" message. Nonces and
+    // signing are shared by the engine thread (orders) and the network
+    // thread (dead man's switch), hence the mutex.
+    std::string signed_post(uint64_t request_id, std::string_view action_json, std::string_view action_msgpack);
 
     // Startup (blocking REST calls, before the network thread starts).
     void load_assets();
@@ -113,10 +129,11 @@ private:
     std::unordered_map<std::string, const Instrument*> coins_;  // "BTC" -> Instrument, for parse_l2book.
     std::unordered_map<InstrumentId, Asset> assets_;            // Filled by connect(), read-only afterwards.
 
-    // Engine thread only (send_*).
-    std::unique_ptr<hyperliquid::Signer> signer_;
+    // Engine thread only (send_*), except signing (see signed_post).
+    std::unique_ptr<hyperliquid::Signer> signer_;         // Set in connect(), used under sign_m_.
     std::unordered_map<ClientOrderId, NewOrder> orders_;  // Last known terms, to build "modify".
-    int64_t last_nonce_ = 0;
+    std::mutex sign_m_;
+    int64_t last_nonce_ = 0;                              // Guarded by sign_m_.
 
     // One WS connection for market data, private events, and order entry ("post").
     std::unique_ptr<transport::WsClient> ws_;

@@ -168,6 +168,12 @@ Action make_modify_action(uint32_t asset, bool buy, std::string_view px, std::st
 // {"type":"cancelByCloid","cancels":[{"asset":0,"cloid":"0x..."}]}
 Action make_cancel_action(uint32_t asset, std::string_view cloid);
 
+// Dead man's switch: {"type":"scheduleCancel","time":<ms>} makes Hyperliquid
+// cancel ALL the account's open orders at that time, unless a later one is
+// sent first. At least 5 s in the future; at most 10 triggers per day.
+// Without a time ({"type":"scheduleCancel"}) the scheduled cancel is removed.
+Action make_schedule_cancel_action(std::optional<int64_t> time_ms);
+
 // {"method":"subscribe","subscription":{"type":"orderUpdates","user":"0x..."}}
 std::string make_subscribe_user(std::string_view type, std::string_view user);
 

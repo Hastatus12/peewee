@@ -43,6 +43,10 @@ constexpr auto kConnectTimeout = std::chrono::seconds(15);
 constexpr auto kPingInterval = std::chrono::seconds(5);
 constexpr auto kIdleTimeout = std::chrono::seconds(15);
 constexpr int kMaxBackoffSeconds = 30;
+// Post ids of the venue's own requests (dead man's switch). The OMS numbers
+// requests from 1, so they can never meet.
+constexpr uint64_t kInternalIdBase = uint64_t{1} << 62;
+constexpr auto kDeadManSwitchRemoveTimeout = std::chrono::seconds(3);
 
 Timestamp wall_now() {
     return std::chrono::duration_cast<Timestamp>(std::chrono::system_clock::now().time_since_epoch());
@@ -73,12 +77,17 @@ const bool kDebug = std::getenv("PEEWEE_DEBUG") != nullptr;
 // thread_ (the single network thread). Engine-thread calls (subscribe_book,
 // resync) are posted to it with asio::post.
 struct HyperliquidVenue::Net {
-    explicit Net(asio::io_context& io) : work(asio::make_work_guard(io)), ping_timer(io), retry_timer(io) {}
+    explicit Net(asio::io_context& io)
+        : work(asio::make_work_guard(io)), ping_timer(io), retry_timer(io), dms_timer(io) {}
 
     // Keeps io.run() alive even when there is nothing to do (e.g. while reconnecting).
     asio::executor_work_guard<asio::io_context::executor_type> work;
     asio::steady_timer ping_timer;
     asio::steady_timer retry_timer;
+    asio::steady_timer dms_timer;              // Network thread: renews the dead man's switch.
+    uint64_t next_internal_id = kInternalIdBase;
+    uint64_t dms_remove_id = 0;                // Network thread: post id of the removal, if sent.
+    std::promise<void>* dms_removed = nullptr; // Network thread: set when the removal is answered.
     int backoff_s = 1;                    // Network thread.
     bool open = false;                    // Network thread.
     std::vector<std::string> book_coins;  // Network thread: coins to (re)subscribe.
@@ -121,10 +130,18 @@ void HyperliquidVenue::connect() {
     if (!sink_) throw std::logic_error("HyperliquidVenue::connect: set_sink() was not called");
     if (thread_.joinable()) return;  // Already connected.
 
+    if (cfg_.dead_man_switch_s != 0 && cfg_.dead_man_switch_s < 10) {
+        throw std::invalid_argument("HyperliquidVenue::connect: dead_man_switch_s must be 0 (off) or at least 10");
+    }
     load_assets();
     if (!cfg_.api_wallet_key.empty()) {
         signer_ = std::make_unique<hyperliquid::Signer>(cfg_.api_wallet_key, !cfg_.testnet);
         check_api_wallet();
+        if (cfg_.dead_man_switch_s > 0) {
+            PEEWEE_LOG("hyperliquid: dead man's switch on: if this program stops, Hyperliquid cancels all "
+                       "open orders of the account within %d s",
+                       cfg_.dead_man_switch_s);
+        }
     } else {
         PEEWEE_LOG("hyperliquid: no API wallet key, public data only (orders will be rejected)");
     }
@@ -154,6 +171,7 @@ void HyperliquidVenue::connect() {
     asio::post(*io_, [this] {
         ws_->connect();
         schedule_ping();
+        if (signer_ && cfg_.dead_man_switch_s > 0) schedule_dead_man_switch();
     });
 
     // Block until the connection is open, so subscribe_book() right after
@@ -258,11 +276,36 @@ void HyperliquidVenue::disconnect() {
     // Wait for a query in progress: it posts its answer to the network thread.
     net_->rest_pool.join();
 
+    // A clean stop removes the dead man's switch, so it does not cancel
+    // orders later nor use one of the 10 daily triggers. Wait (briefly) for
+    // Hyperliquid's answer before closing the socket.
+    if (signer_ && cfg_.dead_man_switch_s > 0) {
+        std::promise<void> removed;
+        auto answered = removed.get_future();
+        asio::post(*io_, [this, &removed] {
+            net_->dms_timer.cancel();
+            if (!net_->open) {
+                PEEWEE_LOG("hyperliquid: not connected, the dead man's switch stays scheduled");
+                removed.set_value();
+                return;
+            }
+            const auto action = hyperliquid::make_schedule_cancel_action(std::nullopt);
+            net_->dms_remove_id = net_->next_internal_id++;
+            net_->dms_removed = &removed;
+            ws_->send(signed_post(net_->dms_remove_id, action.json, action.msgpack));
+        });
+        if (answered.wait_for(kDeadManSwitchRemoveTimeout) != std::future_status::ready) {
+            PEEWEE_LOG("hyperliquid: no answer to the dead man's switch removal: it may still trigger");
+        }
+    }
+
     // Stop timers and close the socket ON the network thread, then wait.
     std::promise<void> closed;
     asio::post(*io_, [this, &closed] {
         net_->retry_timer.cancel();
         net_->ping_timer.cancel();
+        net_->dms_timer.cancel();
+        net_->dms_removed = nullptr;  // The promise above is about to go.
         ws_->close();
         closed.set_value();
     });
@@ -288,6 +331,7 @@ void HyperliquidVenue::on_open() {
         sink_->on_event(VenueStatus{id_, StreamKind::Trading, true, wall_now()});
     }
     if (net_->private_wanted) send_private_subscriptions();
+    renew_dead_man_switch();  // At once, also after a reconnect.
 
     {
         std::lock_guard lock(net_->m);
@@ -322,7 +366,17 @@ void HyperliquidVenue::on_message(std::string_view msg) {
     // ("orderUpdates" brings the acks); an error is the only news that the
     // request failed, and it only carries our request number.
     if (msg.starts_with(R"({"channel":"post")")) {
+        // The answer to the dead man's switch removal, error or not, lets disconnect() go on.
+        if (net_->dms_removed && msg.find("\"id\":" + std::to_string(net_->dms_remove_id) + ",") !=
+                                     std::string_view::npos) {
+            net_->dms_removed->set_value();
+            net_->dms_removed = nullptr;
+        }
         if (auto err = hyperliquid::parse_post_response(msg)) {
+            if (err->id >= kInternalIdBase) {
+                PEEWEE_LOG("hyperliquid: dead man's switch refused: %s", err->text.c_str());
+                return;
+            }
             const auto it = net_->sent.find(err->id);
             if (it == net_->sent.end()) {
                 PEEWEE_LOG("hyperliquid: error for unknown request %llu: %s",
@@ -442,15 +496,37 @@ void HyperliquidVenue::reject_later(ClientOrderId cid, RequestId req, RequestKin
     });
 }
 
-void HyperliquidVenue::send_signed(ClientOrderId cid, RequestId req, RequestKind kind, std::string_view action_json,
-                                   std::string_view action_msgpack) {
+std::string HyperliquidVenue::signed_post(uint64_t request_id, std::string_view action_json,
+                                          std::string_view action_msgpack) {
+    std::lock_guard lock(sign_m_);
     // Nonces must be unique and close to the current time: use milliseconds,
     // +1 if two requests fall in the same millisecond.
     const int64_t nonce = std::max(last_nonce_ + 1, wall_ms());
     last_nonce_ = nonce;
-
     const auto sig = signer_->sign_l1_action(action_msgpack, nonce);
-    std::string message = hyperliquid::make_post(req, action_json, nonce, sig.r, sig.s, sig.v);
+    return hyperliquid::make_post(request_id, action_json, nonce, sig.r, sig.s, sig.v);
+}
+
+// Network thread: push the scheduled cancel-all further into the future.
+void HyperliquidVenue::renew_dead_man_switch() {
+    if (!signer_ || cfg_.dead_man_switch_s <= 0 || !net_->open) return;
+    const int64_t at_ms = wall_ms() + static_cast<int64_t>(cfg_.dead_man_switch_s) * 1000;
+    const auto action = hyperliquid::make_schedule_cancel_action(at_ms);
+    ws_->send(signed_post(net_->next_internal_id++, action.json, action.msgpack));  // Not logged: every few seconds.
+}
+
+void HyperliquidVenue::schedule_dead_man_switch() {
+    net_->dms_timer.expires_after(std::chrono::seconds(std::max(3, cfg_.dead_man_switch_s / 3)));
+    net_->dms_timer.async_wait([this](const boost::system::error_code& ec) {
+        if (ec) return;  // Cancelled by disconnect().
+        renew_dead_man_switch();
+        schedule_dead_man_switch();
+    });
+}
+
+void HyperliquidVenue::send_signed(ClientOrderId cid, RequestId req, RequestKind kind, std::string_view action_json,
+                                   std::string_view action_msgpack) {
+    std::string message = signed_post(req, action_json, action_msgpack);
     if (kDebug) PEEWEE_LOG("hyperliquid -> %s", message.c_str());  // No secrets in it: only the signature.
 
     asio::post(*io_, [this, cid, req, kind, message = std::move(message)] {

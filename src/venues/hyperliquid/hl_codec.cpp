@@ -839,6 +839,24 @@ Action make_cancel_action(uint32_t asset, std::string_view cloid) {
     return a;
 }
 
+Action make_schedule_cancel_action(std::optional<int64_t> time_ms) {
+    // Same fields, in the same order, as the Python SDK's schedule_cancel().
+    Action a;
+    MsgpackWriter w;
+    w.map(time_ms ? 2 : 1);
+    w.str("type");
+    w.str("scheduleCancel");
+    if (time_ms) {
+        a.json = "{\"type\":\"scheduleCancel\",\"time\":" + std::to_string(*time_ms) + "}";
+        w.str("time");
+        w.uint(static_cast<uint64_t>(*time_ms));
+    } else {
+        a.json = "{\"type\":\"scheduleCancel\"}";
+    }
+    a.msgpack = w.bytes();
+    return a;
+}
+
 std::string make_post(uint64_t request_id, std::string_view action_json, int64_t nonce, std::string_view r,
                       std::string_view s, int v) {
     std::string result = "{\"method\":\"post\",\"id\":" + std::to_string(request_id);

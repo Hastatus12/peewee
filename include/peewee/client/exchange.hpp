@@ -31,6 +31,9 @@ namespace peewee {
 
 class Engine;
 class IVenue;
+struct HyperliquidConfig;
+struct BybitConfig;
+struct LighterConfig;
 
 struct ChaseOptions {
     double max_move_pct = 1.0;  // Used when limit is 0: buy at most this % above the ask
@@ -60,15 +63,24 @@ public:
     const char* state_text() const;  // "working", "filled", ...
     bool done() const;               // Anything but Working.
 
-    double filled() const;     // Quantity filled so far.
-    double avg_price() const;  // Average price of the fills received (0 if none).
-    std::string error() const; // The exchange's reason, if Rejected.
+    double filled() const;       // Quantity filled so far.
+    double avg_price() const;    // Average price of the fills received (0 if none).
+    double order_price() const;  // Price of the order in the book now (0 if none, e.g. between orders).
+    std::string error() const;   // The exchange's reason, if Rejected.
 
     void wait() const;                                  // Until done.
     bool wait_for(std::chrono::milliseconds max) const; // False on timeout.
     void cancel();                                      // Asynchronous: see state().
 
+    // Called after every change (state, filled, prices), the last time when
+    // the order is done. Set it right after creating the order: changes
+    // before are not replayed. It runs on the ENGINE thread: keep it short,
+    // never call wait() in it, and pass the news on (a queue, a socket).
+    void on_update(std::function<void(const OrderHandle&)> fn);
+
     struct Shared;  // Internal.
+    OrderHandle() = default;
+    explicit OrderHandle(std::shared_ptr<Shared> s) : s_(std::move(s)) {}  // Internal.
 
 private:
     friend class Exchange;
@@ -85,6 +97,13 @@ public:
     // Keys from LIGHTER_ACCOUNT_INDEX, LIGHTER_API_KEY_INDEX and LIGHTER_API_KEY
     // (the API key's private key). Perpetuals: "BTC", "ETH", ...
     static Exchange lighter(const std::vector<std::string>& symbols, bool testnet = false);
+
+    // Keys passed by the caller instead of the environment, e.g. one Exchange
+    // per user of a web app. The config is used as given (testnet, and for
+    // Hyperliquid the dead man's switch).
+    static Exchange hyperliquid(const HyperliquidConfig& cfg, const std::vector<std::string>& coins);
+    static Exchange bybit(const BybitConfig& cfg, const std::vector<std::string>& symbols);
+    static Exchange lighter(const LighterConfig& cfg, const std::vector<std::string>& symbols);
 
     // Advanced: an engine already set up (venue added, instruments added,
     // connected). The Exchange takes it over and runs it.

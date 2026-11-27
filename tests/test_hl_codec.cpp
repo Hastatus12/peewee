@@ -391,6 +391,17 @@ TEST(is_valid_price_follows_hyperliquid_rules) {
     CHECK(!hyperliquid::is_valid_price("0.123456", 0)); // 6 significant digits.
 }
 
+TEST(schedule_cancel_matches_python_sdk) {
+    // Bytes of msgpack.packb() of the action built by the SDK's schedule_cancel().
+    const auto set = hyperliquid::make_schedule_cancel_action(1795812000000);
+    CHECK_EQ(set.json, R"({"type":"scheduleCancel","time":1795812000000})");
+    CHECK_EQ(to_hex(set.msgpack), "82a474797065ae7363686564756c6543616e63656ca474696d65cf000001a21ebc8100");
+
+    const auto unset = hyperliquid::make_schedule_cancel_action(std::nullopt);
+    CHECK_EQ(unset.json, R"({"type":"scheduleCancel"})");
+    CHECK_EQ(to_hex(unset.msgpack), "81a474797065ae7363686564756c6543616e63656c");
+}
+
 TEST(instrument_rounding_agrees_with_is_valid_price) {
     // The Instrument rules (used by the algorithms) and the codec check (the
     // last one before sending) must agree, for every szDecimals and across

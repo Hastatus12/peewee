@@ -102,6 +102,38 @@ TEST(chase_follows_and_fills) {
     CHECK(std::abs(order.avg_price() - 100.2) < 1e-9);
 }
 
+TEST(on_update_reports_every_change_up_to_the_end) {
+    SimExchange t;
+    auto order = t.ex->limit("BTC", Side::Buy, 0.01, 100.0);
+    std::atomic<int> calls{0};
+    std::atomic<bool> saw_filled{false};
+    order.on_update([&](const OrderHandle& h) {
+        ++calls;
+        if (h.state() == OrderHandle::State::Filled && h.filled() > 0.0) saw_filled = true;
+    });
+    CHECK(!order.wait_for(100ms));
+    CHECK(std::abs(order.order_price() - 100.0) < 1e-9);  // Resting at its price.
+
+    t.on_engine([](SimVenue& sim, const Instrument& i) { sim.trade(i.id, Side::Sell, i.price(100.0), i.qty(0.01)); });
+    CHECK(order.wait_for(2s));
+    std::this_thread::sleep_for(50ms);  // The last callback runs right after the state changes.
+    CHECK(calls > 0);
+    CHECK(saw_filled);
+    CHECK_EQ(order.order_price(), 0.0);  // No longer in the book.
+}
+
+TEST(chase_reports_its_current_price) {
+    SimExchange t;
+    auto order = t.ex->chase("BTC", Side::Buy, 0.01, {.max_move_pct = 1.0, .reprice_every = 10ms});
+    CHECK(!order.wait_for(100ms));
+    CHECK(std::abs(order.order_price() - 100.0) < 1e-9);  // At the best bid.
+    t.on_engine([](SimVenue& sim, const Instrument& i) { sim.update_book(i.id, {{i.price(100.2), i.qty(1)}}, {}); });
+    std::this_thread::sleep_for(200ms);
+    CHECK(std::abs(order.order_price() - 100.2) < 1e-9);  // Followed the bid.
+    order.cancel();
+    CHECK(order.wait_for(2s));
+}
+
 TEST(unknown_symbol_and_tiny_quantity_throw) {
     SimExchange t;
     bool unknown = false;

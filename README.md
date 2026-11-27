@@ -44,6 +44,10 @@ Around the order types:
 - Connections are monitored with pings; a dead one is noticed within 15 s
   (Hyperliquid) or 25 s (Bybit, Lighter), reconnected with backoff, and open orders are
   re-queried afterwards.
+- Optional dead man's switch on Hyperliquid (`HyperliquidConfig::dead_man_switch_s`):
+  the venue keeps a scheduled cancel-all a few seconds in the future, so if
+  the program dies or stays offline, Hyperliquid cancels the account's open
+  orders by itself.
 - Algorithms only react to events (book, order, timer, venue status) and never
   do I/O, so the same code runs against a real exchange or the simulator.
 - Each venue runs its network I/O on its own thread; the engine and the
@@ -99,6 +103,25 @@ key's private key, as Lighter's SDKs print it). The exchange's tick and lot size
 `Exchange` is created, so prices and quantities are plain numbers. The engine
 runs on a background thread owned by the `Exchange`; destroying it cancels
 the orders still working.
+
+When the keys do not come from the environment (one `Exchange` per user of
+a web app, for example), pass the venue's config, and follow orders with a
+callback instead of waiting:
+
+```cpp
+HyperliquidConfig cfg;
+cfg.account_address = user.account;
+cfg.api_wallet_key = user.api_wallet_key;  // from your encrypted store
+cfg.testnet = false;
+cfg.dead_man_switch_s = 60;
+auto hl = Exchange::hyperliquid(cfg, {"ETH"});
+
+auto order = hl.chase("ETH", Side::Buy, 0.01, {.max_move_pct = 0.5});
+order.on_update([](const OrderHandle& h) {
+    // Engine thread: hand the news on (queue, socket), do not block here.
+    publish_to_ui(h.state_text(), h.filled(), h.avg_price(), h.order_price());
+});
+```
 
 The rest of this page is about the lower level, for writing your own
 algorithms.
@@ -224,6 +247,8 @@ chase_live <bybit|hl|lighter> <test|main> SYMBOL buy|sell QTY [LIMIT] [options]
     --offset N         ticks in front of the best price
     --max-reprices N   amends allowed in total
     --max-seconds N    cancel and stop after N seconds
+    --dead-man-switch N  Hyperliquid: if the program dies, all the account's
+                       orders are canceled within N seconds
 hl_book, bybit_book,   print the top of the book (no keys needed)
 lighter_book
 simple_chase <bybit|hl|lighter> SYMBOL buy|sell QTY [MAX_MOVE_PCT]
@@ -279,6 +304,12 @@ it should not.
 - Lighter nonces are counted locally from the API key's next nonce. A refused
   transaction does not use its nonce, so the ones sent right after it are
   refused too; the venue then reads the nonce again from Lighter.
+- The Hyperliquid dead man's switch has not been triggered against the real
+  exchange yet (its action is checked byte for byte against the Python SDK).
+  It cancels every open order of the account, including ones placed by hand,
+  and Hyperliquid allows 10 triggers a day. Bybit's equivalent (Disconnect
+  Cancel Protection) is only offered to institutional accounts, and Lighter
+  has none in this library.
 - Not supported: TWAP, trailing stops, and take-profit / stop-loss attached
   to an entry order.
 

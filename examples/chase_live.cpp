@@ -17,6 +17,7 @@
 //   --offset N         ticks in front of the best price (0 = join it)
 //   --max-reprices N   amends allowed in total
 //   --max-seconds N    stop and cancel after N seconds
+//   --dead-man-switch N  Hyperliquid: cancel all the account's orders within N s if this program dies
 
 #include <chrono>
 #include <csignal>
@@ -51,16 +52,23 @@ int usage() {
                  "  --reprice-ms N     minimum time between two amends (default 50)\n"
                  "  --offset N         ticks in front of the best price (default 0 = join it)\n"
                  "  --max-reprices N   amends allowed in total (default 10000)\n"
-                 "  --max-seconds N    stop and cancel after N seconds (default: never)\n");
+                 "  --max-seconds N    stop and cancel after N seconds (default: never)\n"
+                 "  --dead-man-switch N  Hyperliquid only: if this program dies, Hyperliquid cancels\n"
+                 "                     ALL open orders of the account within N s (N >= 10)\n");
     return 2;
 }
 
 // Reads "--name value" pairs after the positional arguments. False on an
 // unknown option or a missing / negative value.
-bool parse_options(int argc, char** argv, int first, ChaseParams& p) {
+bool parse_options(int argc, char** argv, int first, ChaseParams& p, int& dead_man_switch_s) {
     for (int i = first; i < argc; i += 2) {
         if (i + 1 >= argc) return false;
         const char* name = argv[i];
+        if (std::strcmp(name, "--dead-man-switch") == 0) {
+            dead_man_switch_s = std::atoi(argv[i + 1]);
+            if (dead_man_switch_s < 10) return false;
+            continue;
+        }
         if (std::strcmp(name, "--max-move") == 0) {
             // "1%" or "1": a percentage. More than 10% is almost surely a typo.
             const double pct = std::strtod(argv[i + 1], nullptr);
@@ -128,7 +136,12 @@ int main(int argc, char** argv) {
     const double limit = has_limit ? std::atof(argv[6]) : 0.0;
     if (qty <= 0.0 || (has_limit && limit <= 0.0)) return usage();
     ChaseParams p;
-    if (!parse_options(argc, argv, has_limit ? 7 : 6, p)) return usage();
+    int dead_man_switch_s = 0;
+    if (!parse_options(argc, argv, has_limit ? 7 : 6, p, dead_man_switch_s)) return usage();
+    if (dead_man_switch_s > 0 && !hl) {
+        std::fprintf(stderr, "error: --dead-man-switch exists only on Hyperliquid\n");
+        return usage();
+    }
     if (!has_limit && p.max_move_pct <= 0.0) {
         std::fprintf(stderr, "error: give a LIMIT or --max-move\n");
         return usage();
@@ -155,6 +168,7 @@ int main(int argc, char** argv) {
             cfg.account_address = account ? account : "";
             cfg.api_wallet_key = key ? key : "";
             cfg.testnet = !mainnet;
+            cfg.dead_man_switch_s = dead_man_switch_s;
             auto& v = engine.add_venue<HyperliquidVenue>(cfg);
             const double ref_px = has_limit ? limit : v.fetch_mid(symbol);
             const auto spec = v.fetch_instrument(symbol);
