@@ -2,6 +2,8 @@
 //
 //   HL_ACCOUNT=0x... HL_API_KEY=0x...         ./simple_chase hl HYPE buy 0.2 [MAX_MOVE_PCT]
 //   BYBIT_API_KEY=... BYBIT_API_SECRET=...    ./simple_chase bybit BTCPERP buy 0.001 [MAX_MOVE_PCT]
+//   LIGHTER_ACCOUNT_INDEX=... LIGHTER_API_KEY_INDEX=... LIGHTER_API_KEY=...
+//                                             ./simple_chase lighter ETH buy 0.005 [MAX_MOVE_PCT]
 //
 // MAINNET: real money. MAX_MOVE_PCT (default 1): buy at most this % above
 // the ask seen at start, sell at least this % below the bid. The chase stops
@@ -14,6 +16,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <string>
 
 #include "peewee/client/exchange.hpp"
 
@@ -26,19 +29,21 @@ std::atomic<bool> g_cancel{false};  // Set by Ctrl+C; a signal handler may only 
 
 int main(int argc, char** argv) {
     std::setvbuf(stdout, nullptr, _IOLBF, 0);
-    if (argc < 5 || (std::strcmp(argv[1], "hl") != 0 && std::strcmp(argv[1], "bybit") != 0) ||
+    const std::string venue = argc > 1 ? argv[1] : "";
+    if (argc < 5 || (venue != "hl" && venue != "bybit" && venue != "lighter") ||
         (std::strcmp(argv[3], "buy") != 0 && std::strcmp(argv[3], "sell") != 0)) {
-        std::fprintf(stderr, "usage: %s <hl|bybit> SYMBOL <buy|sell> QTY [MAX_MOVE_PCT]\n", argv[0]);
+        std::fprintf(stderr, "usage: %s <hl|bybit|lighter> SYMBOL <buy|sell> QTY [MAX_MOVE_PCT]\n", argv[0]);
         return 2;
     }
-    const bool hl = std::strcmp(argv[1], "hl") == 0;
     const char* symbol = argv[2];
     const Side side = std::strcmp(argv[3], "buy") == 0 ? Side::Buy : Side::Sell;
     const double qty = std::atof(argv[4]);
     const double max_move = argc > 5 ? std::atof(argv[5]) : 1.0;
 
     try {
-        auto ex = hl ? Exchange::hyperliquid({symbol}) : Exchange::bybit({symbol});
+        auto ex = venue == "hl"      ? Exchange::hyperliquid({symbol})
+                  : venue == "bybit" ? Exchange::bybit({symbol})
+                                     : Exchange::lighter({symbol});
         std::printf("connected. chase: %s %g %s, max move %g%%\n", argv[3], qty, symbol, max_move);
 
         auto order = ex.chase(symbol, side, qty, {.max_move_pct = max_move, .max_duration = 300s});

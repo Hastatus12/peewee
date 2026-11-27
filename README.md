@@ -221,6 +221,8 @@ chase_live <bybit|hl|lighter> <test|main> SYMBOL buy|sell QTY [LIMIT] [options]
     --max-seconds N    cancel and stop after N seconds
 hl_book, bybit_book,   print the top of the book (no keys needed)
 lighter_book
+simple_chase <bybit|hl|lighter> SYMBOL buy|sell QTY [MAX_MOVE_PCT]
+                       one chase through the simple interface, on mainnet
 chase_sim              a chase on the simulator, step by step
 ```
 
