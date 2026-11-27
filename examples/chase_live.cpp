@@ -1,7 +1,9 @@
-// Real exchange example: one chase order on Bybit or Hyperliquid.
+// Real exchange example: one chase order on Bybit, Hyperliquid or Lighter.
 //
 //   BYBIT_API_KEY=... BYBIT_API_SECRET=... ./chase_live bybit <test|main> <SYMBOL> <buy|sell> <QTY> <LIMIT> [options]
 //   HL_ACCOUNT=0x... HL_API_KEY=0x...      ./chase_live hl    <test|main> <COIN>   <buy|sell> <QTY> <LIMIT> [options]
+//   LIGHTER_ACCOUNT_INDEX=.. LIGHTER_API_KEY_INDEX=.. LIGHTER_API_KEY=..
+//                                          ./chase_live lighter <test|main> <SYMBOL> <buy|sell> <QTY> <LIMIT> [options]
 //
 // Examples: ./chase_live bybit main BTCPERP buy 0.001 60000 --reprice-ms 500
 //           ./chase_live hl main BTC buy 0.0002 60000 --max-seconds 120
@@ -28,6 +30,7 @@
 #include "peewee/engine/engine.hpp"
 #include "peewee/venues/bybit.hpp"
 #include "peewee/venues/hyperliquid.hpp"
+#include "peewee/venues/lighter.hpp"
 
 using namespace peewee;
 
@@ -36,12 +39,13 @@ Engine* g_engine = nullptr;
 
 int usage() {
     std::fprintf(stderr,
-                 "usage: chase_live <bybit|hl> <test|main> <SYMBOL> <buy|sell> <QTY> [LIMIT] [options]\n"
+                 "usage: chase_live <bybit|hl|lighter> <test|main> <SYMBOL> <buy|sell> <QTY> [LIMIT] [options]\n"
                  "  e.g. chase_live bybit main BTCPERP buy 0.001 60000 --reprice-ms 500\n"
                  "       chase_live hl main BTC buy 0.0002 60000 --max-seconds 120\n"
                  "       chase_live hl main HYPE buy 0.2 --max-move 1%%\n"
                  "  'main' trades REAL money. Give LIMIT, or --max-move.\n"
-                 "  bybit: BYBIT_API_KEY, BYBIT_API_SECRET; hl: HL_ACCOUNT, HL_API_KEY (environment)\n"
+                 "  bybit: BYBIT_API_KEY, BYBIT_API_SECRET; hl: HL_ACCOUNT, HL_API_KEY;\n"
+                 "  lighter: LIGHTER_ACCOUNT_INDEX, LIGHTER_API_KEY_INDEX, LIGHTER_API_KEY (environment)\n"
                  "options:\n"
                  "  --max-move P%%      without LIMIT: buy at most P%% above the ask,\n"
                  "                     sell at least P%% below the bid (e.g. 1%%)\n"
@@ -112,7 +116,8 @@ int main(int argc, char** argv) {
 
     if (argc < 7) return usage();
     const bool hl = std::strcmp(argv[1], "hl") == 0;
-    if (!hl && std::strcmp(argv[1], "bybit") != 0) return usage();
+    const bool lighter = std::strcmp(argv[1], "lighter") == 0;
+    if (!hl && !lighter && std::strcmp(argv[1], "bybit") != 0) return usage();
     const bool mainnet = std::strcmp(argv[2], "main") == 0;
     if (!mainnet && std::strcmp(argv[2], "test") != 0) return usage();
     const char* symbol = argv[3];
@@ -162,6 +167,21 @@ int main(int argc, char** argv) {
                              qty * ref_px);
                 return 1;
             }
+        } else if (lighter) {
+            const char* account = std::getenv("LIGHTER_ACCOUNT_INDEX");
+            const char* key_index = std::getenv("LIGHTER_API_KEY_INDEX");
+            const char* key = std::getenv("LIGHTER_API_KEY");
+            LighterConfig cfg;
+            cfg.account_index = account ? std::atoll(account) : -1;
+            cfg.api_key_index = key_index ? std::atoi(key_index) : -1;
+            cfg.api_private_key = key ? key : "";
+            cfg.testnet = !mainnet;
+            auto& v = engine.add_venue<LighterVenue>(cfg);
+            const auto spec = v.fetch_instrument(symbol);
+            venue = &v;
+            tick = spec.tick_size;
+            lot = spec.lot_size;
+            min_qty = spec.min_qty;
         } else {
             const char* key = std::getenv("BYBIT_API_KEY");
             const char* secret = std::getenv("BYBIT_API_SECRET");
@@ -177,7 +197,7 @@ int main(int argc, char** argv) {
             min_qty = spec.min_qty;
         }
         const auto& inst = engine.add_instrument(*venue, symbol, tick, lot, min_qty);
-        std::printf("%s %s %s: tick %g, lot %g, min qty %g\n", hl ? "hyperliquid" : "bybit",
+        std::printf("%s %s %s: tick %g, lot %g, min qty %g\n", hl ? "hyperliquid" : lighter ? "lighter" : "bybit",
                     mainnet ? "MAINNET (real money)" : "testnet", symbol, tick, lot, min_qty);
 
         engine.connect_all();

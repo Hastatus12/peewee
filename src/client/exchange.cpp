@@ -14,6 +14,7 @@
 #include "peewee/engine/engine.hpp"
 #include "peewee/venues/bybit.hpp"
 #include "peewee/venues/hyperliquid.hpp"
+#include "peewee/venues/lighter.hpp"
 
 namespace peewee {
 
@@ -341,6 +342,29 @@ Exchange Exchange::bybit(const std::vector<std::string>& symbols, bool testnet) 
     cfg.api_secret = secret;
     cfg.testnet = testnet;
     auto& venue = engine->add_venue<BybitVenue>(cfg);
+    for (const auto& symbol : symbols) {
+        const auto spec = venue.fetch_instrument(symbol);
+        engine->add_instrument(venue, symbol, spec.tick_size, spec.lot_size, spec.min_qty);
+    }
+    engine->connect_all();
+    return Exchange(std::move(engine), venue);
+}
+
+Exchange Exchange::lighter(const std::vector<std::string>& symbols, bool testnet) {
+    const char* account = std::getenv("LIGHTER_ACCOUNT_INDEX");
+    const char* key_index = std::getenv("LIGHTER_API_KEY_INDEX");
+    const char* key = std::getenv("LIGHTER_API_KEY");
+    if (!account || !key_index || !key) {
+        throw std::runtime_error("peewee: set LIGHTER_ACCOUNT_INDEX, LIGHTER_API_KEY_INDEX and LIGHTER_API_KEY");
+    }
+
+    auto engine = std::make_unique<Engine>();
+    LighterConfig cfg;
+    cfg.account_index = std::stoll(account);
+    cfg.api_key_index = std::stoi(key_index);
+    cfg.api_private_key = key;
+    cfg.testnet = testnet;
+    auto& venue = engine->add_venue<LighterVenue>(cfg);
     for (const auto& symbol : symbols) {
         const auto spec = venue.fetch_instrument(symbol);
         engine->add_instrument(venue, symbol, spec.tick_size, spec.lot_size, spec.min_qty);

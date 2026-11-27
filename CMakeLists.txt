@@ -72,10 +72,18 @@ add_library(peewee_hyperliquid
     src/venues/hyperliquid/hl_signer.cpp)
 target_link_libraries(peewee_hyperliquid PUBLIC peewee_core PRIVATE peewee_transport)
 
+add_library(peewee_lighter
+    src/venues/lighter/lighter_venue.cpp
+    src/venues/lighter/lighter_codec.cpp
+    src/venues/lighter/lighter_signer.cpp
+    src/venues/lighter/lighter_crypto.cpp)
+target_link_libraries(peewee_lighter PUBLIC peewee_core PRIVATE peewee_transport)
+
 # Network dependencies (the Bybit adapter does not build without them):
 #   sudo apt install libboost-dev libssl-dev libsimdjson-dev
 # (Hyperliquid's keccak256 and msgpack are written in src/venues/hyperliquid,
-# ECDSA uses OpenSSL: no extra packages.)
+# ECDSA uses OpenSSL; Lighter's Poseidon2 and Schnorr signatures are written in
+# src/venues/lighter: no extra packages.)
 if(PEEWEE_WITH_NETWORK)
     find_package(Boost 1.81 REQUIRED)
     find_package(OpenSSL REQUIRED)
@@ -84,6 +92,7 @@ if(PEEWEE_WITH_NETWORK)
     target_link_libraries(peewee_transport PRIVATE Boost::boost OpenSSL::SSL OpenSSL::Crypto)
     target_link_libraries(peewee_bybit PRIVATE Boost::boost simdjson::simdjson OpenSSL::Crypto Threads::Threads)
     target_link_libraries(peewee_hyperliquid PRIVATE Boost::boost simdjson::simdjson OpenSSL::Crypto Threads::Threads)
+    target_link_libraries(peewee_lighter PRIVATE Boost::boost simdjson::simdjson OpenSSL::Crypto Threads::Threads)
     target_compile_definitions(peewee_core INTERFACE PEEWEE_WITH_NETWORK=1)
 endif()
 
@@ -91,11 +100,12 @@ endif()
 find_package(Threads REQUIRED)
 add_library(peewee_client src/client/exchange.cpp)
 target_link_libraries(peewee_client PUBLIC peewee_engine peewee_sim peewee_bybit peewee_hyperliquid
-                                     PRIVATE Threads::Threads)
+                                     peewee_lighter PRIVATE Threads::Threads)
 
 # Combined target for library consumers
 add_library(peewee INTERFACE)
-target_link_libraries(peewee INTERFACE peewee_client peewee_engine peewee_sim peewee_bybit peewee_hyperliquid)
+target_link_libraries(peewee INTERFACE peewee_client peewee_engine peewee_sim peewee_bybit peewee_hyperliquid
+                                 peewee_lighter)
 add_library(peewee::peewee ALIAS peewee)
 
 if(PEEWEE_BUILD_TESTS)
@@ -120,4 +130,8 @@ if(PEEWEE_BUILD_EXAMPLES)
     target_link_libraries(hl_trigger_test PRIVATE peewee::peewee)
     add_executable(hl_stop_fill_test examples/hl_stop_fill_test.cpp)
     target_link_libraries(hl_stop_fill_test PRIVATE peewee::peewee)
+    add_executable(lighter_book examples/lighter_book.cpp)
+    target_link_libraries(lighter_book PRIVATE peewee::peewee)
+    add_executable(lighter_order_test examples/lighter_order_test.cpp)
+    target_link_libraries(lighter_order_test PRIVATE peewee::peewee)
 endif()
