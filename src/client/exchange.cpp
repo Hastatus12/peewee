@@ -100,7 +100,9 @@ public:
         const std::optional<Price> ref = order_.side == Side::Buy ? book.best_ask() : book.best_bid();
         if (!ref) return;
         const auto move = static_cast<int64_t>(std::llround(ref->ticks * max_move_pct_ / 100.0));
-        order_.px = order_.side == Side::Buy ? *ref + move : *ref - move;
+        // Rounded to a valid price on the safe side: never beyond max_move_pct.
+        const Instrument& inst = ctx_.instrument;
+        order_.px = order_.side == Side::Buy ? inst.round_down(*ref + move) : inst.round_up(*ref - move);
         send();
     }
 
@@ -325,7 +327,7 @@ Exchange Exchange::hyperliquid(const std::vector<std::string>& coins, bool testn
     auto& venue = engine->add_venue<HyperliquidVenue>(cfg);
     for (const auto& coin : coins) {
         const auto spec = venue.fetch_instrument(coin);
-        engine->add_instrument(venue, coin, spec.tick_size, spec.lot_size, spec.min_qty);
+        engine->add_instrument(venue, coin, spec.tick_size, spec.lot_size, spec.min_qty, spec.price_sig_figs);
     }
     engine->connect_all();
     return Exchange(std::move(engine), venue);
@@ -420,7 +422,8 @@ OrderHandle Exchange::limit(std::string_view symbol, Side side, double qty, doub
     o.inst = inst.id;
     o.side = side;
     o.type = OrderType::Limit;
-    o.px = inst.price(price);
+    // Rounded to a valid price on the safe side (a buy down, a sell up).
+    o.px = side == Side::Buy ? inst.round_down(inst.price(price)) : inst.round_up(inst.price(price));
     o.qty = checked_qty(inst, qty);
     o.tif = opt.tif;
     o.reduce_only = opt.reduce_only;

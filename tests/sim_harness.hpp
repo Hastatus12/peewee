@@ -12,10 +12,12 @@ namespace peewee::test {
 using namespace std::chrono_literals;
 
 struct SimHarness {
-    explicit SimHarness(SimConfig cfg = {}, Engine::Options opt = {})
+    // price_sig_figs: as Hyperliquid's limit (0 = none). With 3, prices from
+    // 100 up must be whole numbers, below 100 one decimal is allowed.
+    explicit SimHarness(SimConfig cfg = {}, Engine::Options opt = {}, int price_sig_figs = 0)
         : engine(clock, opt),
           sim(engine.add_venue<SimVenue>(clock, cfg)),
-          btc(engine.add_instrument(sim, "BTCUSDT", 0.1, 0.001, 0.001)) {
+          btc(engine.add_instrument(sim, "BTCUSDT", 0.1, 0.001, 0.001, price_sig_figs)) {
         clock.set(1s);
         sim.set_book(btc.id, {{px(100.0), q(1)}}, {{px(100.5), q(1)}});
     }

@@ -38,9 +38,10 @@ struct HyperliquidConfig {
 
 // Trading rules of one coin, as Hyperliquid's rules give them.
 struct HyperliquidInstrumentSpec {
-    double tick_size = 0.0;  // Valid near the reference price only (5 significant digits).
+    double tick_size = 0.0;  // 10^-(6 - szDecimals): the most decimals a price may have.
     double lot_size = 0.0;   // 10^-szDecimals.
     double min_qty = 0.0;    // One lot (the real minimum is an order VALUE of 10 USD).
+    int price_sig_figs = 5;  // And at most 5 significant digits: see Instrument::price_sig_figs.
 };
 
 class HyperliquidVenue final : public IVenue {
@@ -49,10 +50,10 @@ public:
     ~HyperliquidVenue() override;
 
     // Ask Hyperliquid for a coin's lot (public REST, no key) and compute the
-    // tick valid near `ref_px` (0 = near the current mid price, also asked).
-    // Blocking: call before connect(). Throws if the coin does not exist or
-    // Hyperliquid cannot be reached.
-    HyperliquidInstrumentSpec fetch_instrument(std::string_view coin, double ref_px = 0.0) const;
+    // its price rules. Valid at any price: pass price_sig_figs on to
+    // Engine::add_instrument. Blocking: call before connect(). Throws if the
+    // coin does not exist or Hyperliquid cannot be reached.
+    HyperliquidInstrumentSpec fetch_instrument(std::string_view coin) const;
     // The current mid price of a coin (public REST). Blocking. Throws on error.
     double fetch_mid(std::string_view coin) const;
 

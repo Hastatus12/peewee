@@ -52,7 +52,9 @@ void ChaseOrder::on_book(const OrderBook& book) {
                 return;  // Wait for both sides of the book.
             }
             const auto move = static_cast<int64_t>(std::llround(ref->ticks * p_.max_move_pct / 100.0));
-            p_.limit = p_.side == Side::Buy ? *ref + move : *ref - move;
+            const Instrument& inst = ctx_.instrument;
+            // Rounded to a valid price on the safe side: never beyond max_move_pct.
+            p_.limit = p_.side == Side::Buy ? inst.round_down(*ref + move) : inst.round_up(*ref - move);
         }
         Price target = compute_target(book);
         cid_ = ctx_.oms.send_new(id(), ctx_.venue, ctx_.instrument.id,
@@ -205,11 +207,12 @@ Price ChaseOrder::compute_target(const OrderBook& book) const {
         return px_;
     }
     
+    // "One tick" is one VALID price step: on Hyperliquid it depends on the
+    // price (5 significant digits), elsewhere it is simply one tick.
+    const Instrument& inst = ctx_.instrument;
     Price target = *best_other;
-    if (p_.side == Side::Buy) {
-        target = target + p_.offset_ticks;
-    } else {
-        target = target - p_.offset_ticks;
+    for (int i = 0; i < p_.offset_ticks; ++i) {
+        target = p_.side == Side::Buy ? inst.step_up(target) : inst.step_down(target);
     }
 
     // Never retreat: if our order is already ahead of everyone else, keep it
@@ -231,12 +234,12 @@ Price ChaseOrder::compute_target(const OrderBook& book) const {
         if (p_.side == Side::Buy) {
             std::optional<Price> ask = book.best_ask();
             if (ask && target >= *ask) {
-                target = *ask - 1;
+                target = inst.step_down(*ask);
             }
         } else {
             std::optional<Price> bid = book.best_bid();
             if (bid && target <= *bid) {
-                target = *bid + 1;
+                target = inst.step_up(*bid);
             }
         }
     }
@@ -249,7 +252,10 @@ Price ChaseOrder::compute_target(const OrderBook& book) const {
     if (p_.side == Side::Sell && target < p_.limit) {
         target = p_.limit;
     }
-    return target;
+    // Only valid prices leave (the limit itself may not be one): a buy is
+    // rounded down, a sell up, so the result stays within the limit and on
+    // our side of the spread.
+    return p_.side == Side::Buy ? inst.round_down(target) : inst.round_up(target);
 }
 
 void ChaseOrder::on_unexpected_close() {

@@ -49,9 +49,10 @@ public:
         return ref;
     }
 
-    // Register an instrument tradable on a venue.
+    // Register an instrument tradable on a venue. price_sig_figs: see
+    // Instrument (Hyperliquid: 5; 0 = no limit).
     const Instrument& add_instrument(IVenue& venue, std::string symbol, double tick_size,
-                                     double lot_size, double min_qty);
+                                     double lot_size, double min_qty, int price_sig_figs = 0);
 
     const Instrument* find_instrument(std::string_view venue_name, std::string_view symbol) const;
 

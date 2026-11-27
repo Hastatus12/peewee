@@ -171,6 +171,61 @@ TEST(max_move_sets_the_limit_from_the_market) {
     CHECK_EQ(c2.limit(), h2.px(99.0));
 }
 
+// --- Prices with a significant-digits limit (Hyperliquid) ------------------
+// Harness with 3 significant digits: from 100 up only whole prices are valid.
+
+TEST(max_move_limit_is_rounded_to_a_valid_price_on_the_safe_side) {
+    SimHarness h({}, {}, 3);
+    auto p = buy_params(h);
+    p.limit = Price{};
+    p.max_move_pct = 1.0;  // ask 100.5 + 1% = 101.505 -> not valid -> down to 101.0
+    auto& c = start(h, p);
+    CHECK_EQ(c.limit(), h.px(101.0));
+    CHECK(h.btc.is_valid(c.limit()));
+}
+
+TEST(offset_moves_by_one_valid_price_step) {
+    SimHarness h({}, {}, 3);
+    h.sim.set_book(h.btc.id, {{h.px(100.0), h.q(1)}}, {{h.px(103.0), h.q(1)}});
+    auto p = buy_params(h);
+    p.side = Side::Sell;
+    p.limit = h.px(99.0);
+    p.offset_ticks = 1;
+    auto& c = start(h, p);
+    // One step in front of the ask 103.0 is 102.0, not the invalid 102.9.
+    CHECK_EQ(c.current_price(), h.px(102.0));
+}
+
+TEST(post_only_clamp_uses_a_valid_price) {
+    SimHarness h({}, {}, 3);
+    h.sim.set_book(h.btc.id, {{h.px(100.0), h.q(1)}}, {{h.px(101.0), h.q(1)}});
+    auto p = buy_params(h);
+    p.side = Side::Sell;
+    p.limit = h.px(99.0);
+    p.offset_ticks = 1;  // One step in front of 101.0 is 100.0: the bid, would cross.
+    auto& c = start(h, p);
+    // Post-only: one valid step above the bid is 101.0 (100.1 is not valid).
+    CHECK_EQ(c.current_price(), h.px(101.0));
+}
+
+TEST(chase_only_sends_valid_prices) {
+    SimHarness h({}, {}, 3);
+    auto p = buy_params(h);
+    p.offset_ticks = 1;
+    p.limit = h.px(120.0);
+    start(h, p);
+    // The bid climbs through 99.x and past 100, 101, ...
+    for (double bid : {99.5, 99.7, 99.9, 100.0, 100.4, 101.0, 102.0}) {
+        h.advance(100ms);
+        h.sim.set_book(h.btc.id, {{h.px(bid), h.q(1)}}, {{h.px(bid + 5.0), h.q(1)}});
+        h.pump();
+    }
+    for (const auto& r : h.sim.requests()) {
+        if (r.kind != RequestKind::Cancel) CHECK(h.btc.is_valid(r.px));
+    }
+    CHECK(h.sim.count_requests(RequestKind::Amend) > 0u);
+}
+
 TEST(max_move_is_ignored_when_a_limit_is_given) {
     SimHarness h;
     auto p = buy_params(h);  // limit 101.0

@@ -8,9 +8,8 @@
 // Examples: ./chase_live bybit main BTCPERP buy 0.001 60000 --reprice-ms 500
 //           ./chase_live hl main BTC buy 0.0002 60000 --max-seconds 120
 //           ./chase_live hl main HYPE buy 0.2 --max-move 1%   (no LIMIT: computed)
-// "main" trades REAL money. Tick and lot sizes are read from the exchange
-// (on Hyperliquid the tick is computed for prices near LIMIT, or near the
-// current price with --max-move). Hyperliquid orders must be worth at least 10 USD.
+// "main" trades REAL money. Tick and lot sizes are read from the exchange.
+// Hyperliquid orders must be worth at least 10 USD.
 // LIMIT can be left out when --max-move is given.
 // Options (ChaseParams, defaults in chase_order.hpp):
 //   --max-move P%      no LIMIT: buy at most P% above the ask, sell at least P% below the bid
@@ -148,6 +147,7 @@ int main(int argc, char** argv) {
         double tick = 0.0;
         double lot = 0.0;
         double min_qty = 0.0;
+        int sig_figs = 0;  // Hyperliquid: 5 significant digits.
         if (hl) {
             const char* account = std::getenv("HL_ACCOUNT");
             const char* key = std::getenv("HL_API_KEY");
@@ -157,7 +157,8 @@ int main(int argc, char** argv) {
             cfg.testnet = !mainnet;
             auto& v = engine.add_venue<HyperliquidVenue>(cfg);
             const double ref_px = has_limit ? limit : v.fetch_mid(symbol);
-            const auto spec = v.fetch_instrument(symbol, ref_px);
+            const auto spec = v.fetch_instrument(symbol);
+            sig_figs = spec.price_sig_figs;
             venue = &v;
             tick = spec.tick_size;
             lot = spec.lot_size;
@@ -196,7 +197,7 @@ int main(int argc, char** argv) {
             lot = spec.lot_size;
             min_qty = spec.min_qty;
         }
-        const auto& inst = engine.add_instrument(*venue, symbol, tick, lot, min_qty);
+        const auto& inst = engine.add_instrument(*venue, symbol, tick, lot, min_qty, sig_figs);
         std::printf("%s %s %s: tick %g, lot %g, min qty %g\n", hl ? "hyperliquid" : lighter ? "lighter" : "bybit",
                     mainnet ? "MAINNET (real money)" : "testnet", symbol, tick, lot, min_qty);
 

@@ -111,11 +111,6 @@ std::string format_wire(int64_t units, double step);
 // most 6 - szDecimals decimals. Hyperliquid rejects anything else.
 bool is_valid_price(std::string_view px, int sz_decimals);
 
-// The tick that keeps prices near `px` valid: the 5th significant digit, but
-// no more than 6 - szDecimals decimals. tick_for_price(61000, 5) == 1,
-// tick_for_price(3000, 4) == 0.1, tick_for_price(0.1234, 0) == 0.00001.
-// Only valid while the price stays in the same power of ten.
-double tick_for_price(double px, int sz_decimals);
 
 // Our ClientOrderId as a Hyperliquid cloid: "0x" + 32 hex digits.
 std::string make_cloid(uint64_t cid);

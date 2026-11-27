@@ -5,6 +5,7 @@ function(peewee_test name)
 endfunction()
 
 peewee_test(test_order_book)
+peewee_test(test_instrument)
 peewee_test(test_order_manager)
 peewee_test(test_sim_venue)
 peewee_test(test_chase_order)

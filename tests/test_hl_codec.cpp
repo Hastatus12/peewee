@@ -1,6 +1,7 @@
 #include "check.hpp"
 #include "hl_codec.hpp"
 
+#include <cmath>
 #include <fstream>
 #include <sstream>
 #include <variant>
@@ -215,17 +216,6 @@ TEST(parse_mid_reads_one_coin) {
     CHECK(!hyperliquid::parse_mid("not json", "BTC").has_value());
 }
 
-TEST(tick_for_price_follows_hyperliquid_rules) {
-    using hyperliquid::tick_for_price;
-    CHECK_EQ(tick_for_price(61000.0, 5), 1.0);     // BTC.
-    CHECK_EQ(tick_for_price(120000.0, 5), 1.0);    // Integers are always fine.
-    CHECK(std::abs(tick_for_price(3000.0, 4) - 0.1) < 1e-12);      // ETH.
-    CHECK(std::abs(tick_for_price(0.1234, 0) - 0.00001) < 1e-12);  // 5 significant digits.
-    CHECK(std::abs(tick_for_price(0.001234, 0) - 0.000001) < 1e-15);  // Capped by 6 - szDecimals.
-    // Every price on the tick grid near the reference is valid.
-    CHECK(hyperliquid::is_valid_price(hyperliquid::format_wire(30005, 0.1), 4));
-}
-
 TEST(market_without_match_live_messages) {
     // Real market buy from 2026-11-22 with a worst price below the market.
     const auto err = hyperliquid::parse_post_response(real_message("post_market_no_match.json"));
@@ -399,6 +389,25 @@ TEST(is_valid_price_follows_hyperliquid_rules) {
     CHECK(!hyperliquid::is_valid_price("1.25", 5));     // BTC: at most 6 - 5 = 1 decimal.
     CHECK(hyperliquid::is_valid_price("0.12345", 0));   // Leading zeros do not count.
     CHECK(!hyperliquid::is_valid_price("0.123456", 0)); // 6 significant digits.
+}
+
+TEST(instrument_rounding_agrees_with_is_valid_price) {
+    // The Instrument rules (used by the algorithms) and the codec check (the
+    // last one before sending) must agree, for every szDecimals and across
+    // powers of ten.
+    for (int sz_decimals : {0, 2, 4, 5}) {
+        Instrument inst;
+        inst.tick_size = std::pow(10.0, -(6 - sz_decimals));
+        inst.lot_size = std::pow(10.0, -sz_decimals);
+        inst.price_sig_figs = 5;
+        for (int64_t base : {9'990LL, 99'900LL, 999'000LL, 9'990'000LL}) {
+            for (int64_t t = base; t < base + 2'000; ++t) {
+                const Price p{t};
+                const std::string text = hyperliquid::format_wire(p.ticks, inst.tick_size);
+                CHECK_EQ(inst.is_valid(p), hyperliquid::is_valid_price(text, sz_decimals));
+            }
+        }
+    }
 }
 
 TEST(parse_meta_reads_asset_indexes) {

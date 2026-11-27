@@ -33,6 +33,11 @@ Hyperliquid stop-market or take-profit-market order uses the exchange's own
 Around the order types:
 
 - Prices and quantities are integers (ticks and lots), never doubles.
+- Exchange price rules beyond the tick are handled at any price: Hyperliquid's
+  limit of 5 significant digits is part of the instrument
+  (`Instrument::round_down`, `round_up`, `step_up`, `step_down`), and the chase
+  and the simple interface round to a valid price on the safe side (a buy
+  down, a sell up).
 - The order manager allows one request in flight per order, matches answers
   to requests, drops duplicate fills, and asks the exchange for the order
   state when an answer does not arrive in time.
@@ -261,9 +266,6 @@ it should not.
 - Order rate limits are not enforced for Hyperliquid and Lighter (they depend
   on the account's volume or tier).
 - Bybit has been tested with linear contracts only.
-- Hyperliquid prices are limited to 5 significant digits. The tick used for an
-  instrument is computed from its price at startup, and is only valid while the
-  price stays in the same power of ten.
 - Lighter: order entry has not been run against the real exchange yet. Its
   transactions are signed with Lighter's own scheme (Poseidon2 hashes,
   Schnorr signatures on the ECgFp5 curve), written in C++ and checked byte for

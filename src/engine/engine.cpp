@@ -78,8 +78,9 @@ void Engine::register_venue(std::unique_ptr<IVenue> v) {
 }
 
 const Instrument& Engine::add_instrument(IVenue& venue, std::string symbol, double tick_size,
-                                         double lot_size, double min_qty) {
+                                         double lot_size, double min_qty, int price_sig_figs) {
     Instrument inst;
+    inst.price_sig_figs = price_sig_figs;
     inst.id = static_cast<InstrumentId>(instruments_.size());
     inst.venue = venue.id();
     inst.symbol = std::move(symbol);

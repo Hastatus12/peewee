@@ -871,15 +871,6 @@ std::string format_wire(int64_t units, double step) {
     return text;
 }
 
-double tick_for_price(double px, int sz_decimals) {
-    if (px <= 0.0) return 0.0;
-    // 5 significant digits: 61000 has 5 digits before the dot -> tick 1.
-    const int digits_before_dot = static_cast<int>(std::floor(std::log10(px))) + 1;
-    const int decimals = std::min(5 - digits_before_dot, 6 - sz_decimals);
-    // Integer prices are always valid, so the tick is never above 1.
-    return std::pow(10.0, -std::max(decimals, 0));
-}
-
 bool is_valid_price(std::string_view px, int sz_decimals) {
     const auto dot = px.find('.');
     if (dot == std::string_view::npos) return true;  // Integers are always accepted.

@@ -169,7 +169,7 @@ void HyperliquidVenue::connect() {
     }
 }
 
-HyperliquidInstrumentSpec HyperliquidVenue::fetch_instrument(std::string_view coin, double ref_px) const {
+HyperliquidInstrumentSpec HyperliquidVenue::fetch_instrument(std::string_view coin) const {
     transport::HttpClient http(cfg_.testnet ? "https://api.hyperliquid-testnet.xyz" : "https://api.hyperliquid.xyz");
     const auto res = http.post("/info", R"({"type":"meta"})", {{"Content-Type", "application/json"}});
     const auto meta = hyperliquid::parse_meta(res.body);
@@ -181,11 +181,14 @@ HyperliquidInstrumentSpec HyperliquidVenue::fetch_instrument(std::string_view co
     if (it == meta->end()) {
         throw std::runtime_error("HyperliquidVenue::fetch_instrument: unknown coin '" + std::string(coin) + "'");
     }
-    if (ref_px <= 0.0) ref_px = fetch_mid(coin);  // No reference given: the current mid.
+    // A perp price has at most 6 - szDecimals decimals: that is the finest
+    // tick, valid at any price. The 5 significant digits rule on top of it
+    // is applied by Instrument::round_down / round_up.
     HyperliquidInstrumentSpec spec;
     spec.lot_size = std::pow(10.0, -it->second.sz_decimals);
-    spec.tick_size = hyperliquid::tick_for_price(ref_px, it->second.sz_decimals);
+    spec.tick_size = std::pow(10.0, -std::max(0, 6 - it->second.sz_decimals));
     spec.min_qty = spec.lot_size;
+    spec.price_sig_figs = 5;
     return spec;
 }
 
